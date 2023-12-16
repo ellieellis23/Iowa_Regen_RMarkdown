@@ -1,0 +1,495 @@
+---
+title: "Iowa_Regen_RMarkdown"
+author: "Ellie Ellis"
+date: '2023-12-15'
+output:
+  html_document: default
+  word_document: default
+  pdf_document: default
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+```{r, include=FALSE}
+source('IowaRegen_setup.Rmd')
+```
+
+# Introduction  
+```{r}
+# The intention of this RMarkdown is to serve as a repository for all code related to my dissertation research on the impacts of regenerative agriculture adoption in Iowa. I assembled all code written thus far and create a few placeholders for future code I intend to write. My hope is to send this document to collaborators and committee members as needed, and to have an organized place to access my code in the future. 
+```
+
+```{r}
+#The objectives of this project are as follows: 
+  # 1. Quantify management impacts on soil C and N stocks in large-scale row crop systems in the U.S. Midwest – with application to the broader scales
+  # 2.Beyond C and N stock differences, my goal is to understand the system-level impacts of regenerative practices, as they are currently defined and used by producers in the Midwest. 
+
+# I am achieving this by: 
+# - Evaluating C and N stocks on neighboring farms using conventional and regenerative management systems in bulk soil and density-separated fractions 
+# - Comparing on-farm results to those generated on five long-term tillage experiments across Iowa   
+# - Characterizing microbial community structure between farms under different management 
+# - Conducting system-level (biogeochemical and economic) modeling using management data from farmer collaborators 
+
+```
+
+```{r}
+# In the fall of 2022, I sampled 22 farms throughout Iowa using one of two management systems: 
+# 1. Regenerative - annual cover crops (at least 4 years continuous use) and no-till farming (at least 8 years continuous use) 
+# 2. Conventional - annual or biannual tillage and bare winter fallow 
+
+# All farms were growing corn and soybeans in rotation, and were planted to soybeans in 2022.
+```
+
+```{r, fig.cap= "Different management practies impact soil structure, biodiversity, and soil C and N stocks."}
+include_graphics("images/conv_regen.PNG")
+```
+
+```{r, fig.cap="Study design - including locations of farms sampled, method of selecting sampling points, soil depths sampled, and data generated for each sample."}
+
+include_graphics("images/study_design.PNG")
+```
+
+```{r}
+# Load C and N concentration data, includes the re-runs done in October 2023
+CN_data <- read.csv("data/CN_data_all_08.24.23_final.csv", fileEncoding="UTF-8-BOM")
+```
+
+```{r}
+# find the average of any duplicates 
+C_avg <- aggregate(CN_data$per_C, list(CN_data$Sample_ID), mean)
+colnames(C_avg) <- c("Sample_ID", "per_C")
+N_avg <- aggregate(CN_data$per_N, list(CN_data$Sample_ID), mean)
+colnames(N_avg) <- c("Sample_ID", "per_N")
+
+CN_avg <- left_join(C_avg, N_avg, by = "Sample_ID")
+
+```
+
+```{r}
+#load sample info and Google Sheets info (contains BD values)
+GSheets <- read.csv("data/Iowa_Regen_Data_GSheets.csv", fileEncoding = "UTF-8-BOM")
+
+SampleInfo <- read.csv("data/Iowa_Regen_Sample_Info.csv", fileEncoding = "UTF-8-BOM")
+
+```
+
+```{r}
+# join the CN data sheet with the BD and sample info sheet
+
+# I'm joining them in this order to remove any missing samples (There were several 60-100 samples that we didnt have)
+sample_info <- left_join(GSheets, SampleInfo, by = "Sample_ID")
+
+data1 <- left_join(CN_avg, sample_info, by = "Sample_ID")
+
+
+# replace all NAs with 0's
+```
+
+```{r}
+#add in carbonate data, where applicable
+inorgC <- read.csv("data/inorgC.csv", fileEncoding="UTF-8-BOM")
+
+data2 <- left_join(data1, inorgC, by = "Sample_ID") %>%
+  mutate(per_inorgC = coalesce(per_inorgC, 0))
+
+data2$per_OC <- data2$per_C - data2$per_inorgC
+```
+
+```{r}
+#add in root data 
+roots <- read.csv("data/Root_LOI.csv")
+
+data3 <- left_join(data2, roots, by = "Sample_ID")
+```
+
+```{r}
+#rename columns with weird long names
+data3 <- data3 %>% rename(BD_fine = BD.of.fine.soil.fraction..with.rock.correction.)
+```
+
+
+```{r}
+#add in texture data 
+texture <- read.csv("data/Iowa_Regen_Texture.csv")
+
+#rename columns, change #DIV/0's to NAs (indicates analyses are not complete yet)
+texture <- texture %>% mutate(Sample_ID = Sample.ID, 
+                              Sand_pct = Sand.., 
+                              Silt_pct = Silt.., 
+                              Clay_pct = Clay..) %>%
+ mutate(Clay_pct = ifelse(Clay_pct == "#DIV/0!", NA, Clay_pct))
+
+
+data4 <- left_join(data3, texture, by = "Sample_ID")
+```
+
+
+```{r}
+#add in litter data (placeholder, these analyses are not complete yet)
+```
+
+```{r}
+#filter out R03 no cover crops and R14
+data5 <- data4 %>% filter(Trt != "badRegen") %>% filter(Trt != "ncRegen")
+```
+
+```{r}
+#add in sheet with simpler pair names 
+names <- read.csv("data/Iowa_Regen_new_pair_names.csv")
+
+data6 <- left_join(data5, names, by = "Field_ID")
+```
+
+```{r}
+# Now add in the fractionation data. This is in a slightly different format - it is currently in a long format and I want to transform it to wide.I'm also still generating a lot of data in this category, so I will need to continue reloading and reformatting as needed. 
+
+frac <- read.csv("data/Frac_CN_data.csv", fileEncoding="UTF-8-BOM")
+
+to_remove <- c("_LPOM", "_MAOM", "_HPOM")
+
+frac_select <- frac %>% dplyr::select(Sample_ID, Frac_type, per_N, per_C) %>% mutate(Sample_ID = str_replace_all(Sample_ID, c("_LPOM" = "", "_MAOM" = "", "_HPOM" = "")))
+
+
+```
+
+```{r}
+#selecting just the columns I know I will be using
+
+data <- data6 %>% dplyr::select(Sample_ID, Depth_increment, BD_whole_soil, BD_fine, Soil_moist_per, Total_sample_oven_dry_mass, TOTAL_ROCK_mass, Worm_count, Root_picking_method, pH, Field_ID, Pair_num, Region, Trt, Rep_num, Depth, per_C, per_OC, per_N, Root_mass, RootC_g, Sand_pct, Silt_pct, Clay_pct, New_pair_num, New_Field_ID, MAP, MAT)
+
+write.csv(data, "data/Iowa_regen_data_select.csv")
+```
+
+
+```{r}
+# This part of the script takes a long time, but should only need to be run once because I'm writing rasters for each county. 
+# IA_counties <- counties(state = "IA")
+# MN_counties <- counties(state = "MN")
+
+# Filter out each county where my sampling points are located. I'm sure there is a way to make this cleaner, but I'm in a hurry
+# Adams_co <- IA_counties %>% filter(NAME == "Adams")
+# Murray_co <- MN_counties %>% filter(NAME == "Murray")
+# Jefferson_co <- IA_counties %>% filter(NAME == "Jefferson")
+# Fayette_co <- IA_counties %>% filter(NAME == "Fayette")
+# Washington_co <- IA_counties %>% filter(NAME == "Washington")
+# Story_co <- IA_counties %>% filter(NAME == "Story")
+# Potta_co <- IA_counties %>% filter(NAME == "Pottawattamie")
+# Mitchell_co <- IA_counties %>% filter(NAME == "Mitchell")
+# Benton_co <- IA_counties %>% filter(NAME == "Benton")
+# Jones_co <- IA_counties %>% filter(NAME == "Jones")
+# Bremer_co <- IA_counties %>% filter(NAME == "Bremer")
+
+# Pull elevation rasters for each county
+# Adams_DEM <- get_elev_raster(Adams_co, z = 14)
+# Murray_DEM <- get_elev_raster(Murray_co, z = 14)
+# Jefferson_DEM <- get_elev_raster(Jefferson_co, z = 14)
+# Fayette_DEM <- get_elev_raster(Fayette_co, z = 14)
+# Washington_DEM <- get_elev_raster(Washington_co, z = 14)
+# Story_DEM <- get_elev_raster(Story_co, z = 14)
+# Potta_DEM <- get_elev_raster(Potta_co, z = 14)
+# Mitchell_DEM <- get_elev_raster(Mitchell_co, z = 14)
+# Benton_DEM <- get_elev_raster(Benton_co, z = 14)
+# Jones_DEM <- get_elev_raster(Jones_co, z = 14)
+# Bremer_DEM <- get_elev_raster(Bremer_co, z = 14)
+
+#Write a raster for each county 
+# writeRaster(Murray_DEM, "spatial/Murray_co_DEM_14.tif", overwrite = TRUE)
+# writeRaster(Jefferson_DEM, "spatial/Jefferson_co_DEM_14.tif", overwrite = TRUE)
+# writeRaster(Fayette_DEM, "spatial/Fayette_co_DEM_14.tif", overwrite = TRUE)
+# writeRaster(Washington_DEM, "spatial_Washington_co_DEM_14.tif", overwrite = TRUE)
+# writeRaster(Story_DEM, "spatial/Story_co_DEM_14.tif", overwrite = TRUE)
+# writeRaster(Potta_DEM, "spatial/Potta_co_DEM_14.tif", overwrite = TRUE)
+# writeRaster(Mitchell_DEM, "spatial/Mitchell_co_DEM_14.tif", overwrite = TRUE)
+# writeRaster(Benton_DEM, "spatial/Benton_co_DEM_14.tif", overwrite = TRUE)
+# writeRaster(Jones_DEM, "spatial/Jones_co_DEM_14.tif", overwrite = TRUE)
+# writeRaster(Bremer_DEM, "spatial/Bremer_co_DEM_14.tif", overwrite = TRUE)
+```
+
+## This next section goes county by county. Since the fields are all different sizes and shapes, I can't necessarily use the exact same code to crop each county around the points. I need to look at and check each. 
+```{r}
+#Read in the Adams county raster 
+Adams_DEM <- rast("spatial/Adams_co_DEM_14.tif")
+```
+
+```{r}
+#Load in the pair 01 points, which are located in Adams county 
+R01_points <- st_read("spatial/r01_points_geojson.geojson")
+C01_points <- st_read("spatial/c01_points_geojson.geojson")
+
+R01_points_prj <- st_transform(R01_points, st_crs(Adams_DEM))
+C01_points_prj <- st_transform(C01_points, st_crs(Adams_DEM))
+
+Site01_points <- rbind(R01_points_prj, C01_points_prj)
+
+st_crs(Site01_points) == st_crs(Adams_DEM)
+```
+
+
+```{r}
+# Check that the points fall in the raster and that they make sense geographically (do you recognize the topography?)
+qtm(Adams_DEM) +
+ qtm(Site01_points)
+```
+
+```{r}
+# Create a 8000 (meter?) buffer around the points
+Site01_buffer <- st_buffer(Site01_points, dist = 8000)
+```
+
+```{r}
+# Crop the DEM to that buffer to reduce processing time 
+Site01_crop <- crop(Adams_DEM, Site01_buffer, mask = TRUE)
+```
+
+## Calculating the Topographic Position Index (TPI) at Pair01
+```{r}
+# Calculate mean elevation of a neighborhood (window size = 3x3 cells)
+mean_elevation <- focal(Site01_crop, w = matrix(1, 3, 3), fun = mean, na.rm = TRUE)
+
+# Calculate Topographic Position Index (TPI)
+tpi <- Site01_crop - mean_elevation
+
+# Extract the TPI value at the Site01_points 
+tpi_values <- extract(tpi, Site01_points)
+
+# Create a join key to merge Site01_points and the TPI values 
+Site01_points <- Site01_points %>% mutate(join = row_number())
+tpi_values <- tpi_values %>% mutate(join = row_number()) %>% rename(TPI = Adams_co_DEM_14)
+
+#join the TPI dataframe to the point metadata
+TPI_Site01 <- left_join(tpi_values, Site01_points, by = "join")
+
+# Find the mean TPI for each farm 
+TPI_R01 <- tpi_values %>%
+  filter(ID %in% 1:9) %>%  # Filter for IDs 1 through 9, which correspond to the R01 points
+  summarise(mean_value = mean(TPI))
+
+TPI_C01 <- tpi_values %>%
+  filter(ID %in% 10:18) %>%  # Filter for IDs 10 through 18, which correspond to the C01 points 
+  summarise(mean_value = mean(TPI))
+```
+
+## Calculating the average slope of the field
+```{r}
+# Crop the DEM to the points for each field 
+R01_buffer <- st_buffer(R01_points_prj, dist = 300)
+R01_crop <- crop(Adams_DEM, R01_buffer, mask = TRUE)
+
+C01_buffer <- st_buffer(C01_points_prj, dist = 300)
+C01_crop <- crop(Adams_DEM, C01_buffer, mask = TRUE)
+
+qtm(C01_crop)
+
+## Use this code to look at the buffers you just created 
+# qtm(R01_buffer)+
+#   qtm(R01_points_prj)+
+#   qtm(C01_buffer) +
+#   qtm(C01_points_prj)+
+#   qtm(Adams_DEM)
+
+
+# Obtain slope for the cropped raster 
+C01_slope = terrain(C01_crop, v = "slope")
+R01_slope = terrain(R01_crop, v = "slope")
+
+# Calculate zonal statistics for the slope raster 
+C01_stats = zonal(x = C01_slope, z = C01_crop, fun = "mean")
+R01_stats = zonal(x = R01_slope, z = R01_crop, fun = "mean")
+
+#Find the mean slope for the whole field 
+C01_mean_slope <- C01_stats %>% summarise(mean = mean(slope, na.rm = TRUE))
+R01_mean_slope <- R01_stats %>% summarise(mean = mean(slope, na.rm = TRUE))
+```
+
+
+#########################################################
+
+```{r}
+#Read in the Benton county raster 
+Benton_DEM <- rast("spatial/Benton_co_DEM_14.tif")
+```
+
+
+```{r}
+#Load in the pair 02 points, which are located in Benton county 
+R02_points <- st_read("spatial/r02_points_geojson.geojson")
+C02_points <- st_read("spatial/c02_points_geojson.geojson")
+
+R02_points_prj <- st_transform(R02_points, st_crs(Benton_DEM))
+C02_points_prj <- st_transform(C02_points, st_crs(Benton_DEM))
+
+Site02_points <- rbind(R02_points_prj, C02_points_prj)
+
+st_crs(Site02_points) == st_crs(Benton_DEM)
+```
+
+```{r}
+# Create a 8000 (meter?) buffer around the points
+Site02_buffer <- st_buffer(Site02_points, dist = 4000)
+```
+
+```{r}
+# Crop the DEM to that buffer to reduce processing time 
+Site02_crop <- crop(Benton_DEM, Site02_buffer, mask = TRUE)
+```
+
+```{r}
+# Check that the points fall in the raster and that they make sense geographically (do you recognize the topography?)
+qtm(Site02_crop) +
+ qtm(Site02_points)
+```
+
+
+
+## Calculating the Topographic Position Index (TPI) at Pair02
+```{r}
+# Calculate mean elevation of a neighborhood (window size = 3x3 cells)
+mean_elevation <- focal(Site02_crop, w = matrix(1, 3, 3), fun = mean, na.rm = TRUE)
+
+# Calculate Topographic Position Index (TPI)
+tpi <- Site02_crop - mean_elevation
+
+# Extract the TPI value at the Site02_points 
+tpi_values <- extract(tpi, Site02_points)
+
+# Create a join key to merge Site02_points and the TPI values 
+Site02_points <- Site02_points %>% mutate(join = row_number())
+tpi_values <- tpi_values %>% mutate(join = row_number()) %>% rename(TPI = Benton_co_DEM_14)
+
+#join the TPI dataframe to the point metadata
+TPI_Site02 <- left_join(tpi_values, Site02_points, by = "join")
+
+# Find the mean TPI for each farm 
+TPI_R02 <- tpi_values %>%
+  filter(ID %in% 1:9) %>%  # Filter for IDs 1 through 9, which correspond to the R02 points
+  summarise(mean_value = mean(TPI))
+
+TPI_C02 <- tpi_values %>%
+  filter(ID %in% 10:18) %>%  # Filter for IDs 10 through 18, which correspond to the C02 points 
+  summarise(mean_value = mean(TPI))
+```
+
+## Calculating the average slope of the field
+```{r}
+# Crop the DEM to the points for each field 
+R02_buffer <- st_buffer(R02_points_prj, dist = 90)
+R02_crop <- crop(Benton_DEM, R02_buffer, mask = TRUE)
+
+C02_buffer <- st_buffer(C02_points_prj, dist = 90)
+C02_crop <- crop(Benton_DEM, C02_buffer, mask = TRUE)
+
+# Check the map to make sure they aren't overlapping and that they account for just the field of interest. Adjust the "dist" as needed.  
+qtm(R02_crop)+
+qtm(C02_crop)
+
+## Use this code to look at the buffers you just created 
+# qtm(R02_buffer)+
+#   qtm(R02_points_prj)+
+#   qtm(C02_buffer) +
+#   qtm(C02_points_prj)+
+#   qtm(Benton_DEM)
+
+
+# Obtain slope for the cropped raster 
+C02_slope = terrain(C02_crop, v = "slope")
+R02_slope = terrain(R02_crop, v = "slope")
+
+# Calculate zonal statistics for the slope raster 
+C02_stats = zonal(x = C02_slope, z = C02_crop, fun = "mean")
+R02_stats = zonal(x = R02_slope, z = R02_crop, fun = "mean")
+
+#Find the mean slope for the whole field 
+C02_mean_slope <- C02_stats %>% summarise(mean = mean(slope, na.rm = TRUE))
+R02_mean_slope <- R02_stats %>% summarise(mean = mean(slope, na.rm = TRUE))
+```
+
+########################################################
+
+
+```{r}
+#Read in the Benton county raster 
+Fayette_DEM <- rast("spatial/Fayette_co_DEM_14.tif")
+```
+
+```{r}
+#Load in the pair 10 points, which are located in Fayette county 
+R10_points <- st_read("spatial/r10_points_geojson.geojson")
+C10_points <- st_read("spatial/c10_points_geojson.geojson")
+
+R10_points_prj <- st_transform(R10_points, st_crs(Fayette_DEM))
+C10_points_prj <- st_transform(C10_points, st_crs(Fayette_DEM))
+
+Site10_points <- rbind(R10_points_prj, C10_points_prj)
+
+st_crs(Site10_points) == st_crs(Fayette_DEM)
+```
+
+```{r}
+# Create a 8000 (meter?) buffer around the points
+Site10_buffer <- st_buffer(Site10_points, dist = 2000)
+```
+
+```{r}
+# Crop the DEM to that buffer to reduce processing time 
+Site10_crop <- crop(Fayette_DEM, Site10_buffer, mask = TRUE)
+```
+
+```{r}
+# Check that the points fall in the raster and that they make sense geographically (do you recognize the topography?)
+qtm(Site10_crop) +
+ qtm(Site10_points)
+```
+
+```{r}
+# Calculate mean elevation of a neighborhood (window size = 3x3 cells)
+mean_elevation <- focal(Site10_crop, w = matrix(1, 3, 3), fun = mean, na.rm = TRUE)
+
+# Calculate Topographic Position Index (TPI)
+tpi <- Site10_crop - mean_elevation
+
+# Extract the TPI value at the Site10_points 
+tpi_values <- extract(tpi, Site10_points)
+
+# Create a join key to merge Site10_points and the TPI values 
+Site10_points <- Site10_points %>% mutate(join = row_number())
+tpi_values <- tpi_values %>% mutate(join = row_number()) %>% rename(TPI = Fayette_co_DEM_14)
+
+#join the TPI dataframe to the point metadata
+TPI_Site10 <- left_join(tpi_values, Site10_points, by = "join")
+
+# Find the mean TPI for each farm 
+TPI_R10 <- tpi_values %>%
+  filter(ID %in% 1:9) %>%  # Filter for IDs 1 through 9, which correspond to the R10 points
+  summarise(mean_value = mean(TPI))
+
+TPI_C10 <- tpi_values %>%
+  filter(ID %in% 10:18) %>%  # Filter for IDs 10 through 18, which correspond to the C10 points 
+  summarise(mean_value = mean(TPI))
+```
+
+```{r}
+# Crop the DEM to the points for each field 
+R10_buffer <- st_buffer(R10_points_prj, dist = 100)
+R10_crop <- crop(Fayette_DEM, R10_buffer, mask = TRUE)
+
+C10_buffer <- st_buffer(C10_points_prj, dist = 130)
+C10_crop <- crop(Fayette_DEM, C10_buffer, mask = TRUE)
+
+# Check the map to make sure they aren't overlapping and that they account for just the field of interest. Adjust the "dist" as needed.  
+qtm(R10_crop)+
+qtm(C10_crop)
+
+# Obtain slope for the cropped raster 
+C10_slope = terrain(C10_crop, v = "slope")
+R10_slope = terrain(R10_crop, v = "slope")
+
+# Calculate zonal statistics for the slope raster 
+C10_stats = zonal(x = C10_slope, z = C10_crop, fun = "mean")
+R10_stats = zonal(x = R10_slope, z = R10_crop, fun = "mean")
+
+#Find the mean slope for the whole field 
+C10_mean_slope <- C10_stats %>% summarise(mean = mean(slope, na.rm = TRUE))
+R10_mean_slope <- R10_stats %>% summarise(mean = mean(slope, na.rm = TRUE))
+```
